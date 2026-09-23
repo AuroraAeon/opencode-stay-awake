@@ -24,8 +24,13 @@
  *     any work item is open, which covers long silent tool calls;
  *   - any event for a tracked session refreshes its liveness, and a session
  *     with no open work item goes idle after `quietMs` of silence;
- *   - a session with no events at all for `staleMs` is dropped, so a lost end
- *     event can never hold the inhibitor forever.
+ *   - a work item that shows no progress for `staleMs` is cleared, and a
+ *     session with no events at all for `staleMs` is dropped, so a lost end
+ *     event can never hold the inhibitor forever — not even while unrelated
+ *     traffic keeps refreshing the session's liveness;
+ *   - while no instance has a live event stream nothing can arrive, so the
+ *     hold is bounded by `blindMs` (enough to bridge a reconnect) instead of
+ *     `staleMs`.
  */
 
 import { existsSync, appendFileSync } from "node:fs"
@@ -63,6 +68,14 @@ const DEFAULTS = {
    * would otherwise hold the inhibitor forever. 0 disables.
    */
   staleMs: 15 * 60_000,
+  /**
+   * How long to keep holding while no plugin instance has a live event
+   * stream. With no stream nothing can arrive, so the only reason to hold is
+   * to bridge a reconnect — and the stream retry backoff caps at 30s. Without
+   * this bound a permanently stream-less plugin would hold the machine awake
+   * for `staleMs` with no evidence of any work at all.
+   */
+  blindMs: 30_000,
   /** How often to reconcile busy sessions. */
   sweepMs: 5_000,
   /** caffeinate flags (macOS): -d display, -i idle, -m disk, -s system (AC). */
@@ -105,6 +118,13 @@ const CLOSE_EVENTS = new Set([
   "session.compaction.ended",
   "session.compaction.failed",
   "session.shell.ended",
+])
+
+/** Events that end a turn outright, so no work item can still be open. */
+const EXECUTION_END_EVENTS = new Set([
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "session.execution.interrupted",
 ])
 
 /** Events that mean the session is gone and can be forgotten immediately. */
@@ -174,7 +194,7 @@ function createInhibitor(options) {
 function normalizeOptions(raw) {
   const options = { ...DEFAULTS, ...(raw && typeof raw === "object" ? raw : {}) }
   options.enabled = options.enabled !== false
-  for (const key of ["graceMs", "quietMs", "staleMs", "sweepMs"]) {
+  for (const key of ["graceMs", "quietMs", "staleMs", "sweepMs", "blindMs"]) {
     options[key] =
       typeof options[key] === "number" && Number.isFinite(options[key]) && options[key] >= 0
         ? options[key]
@@ -269,16 +289,24 @@ function setupPlugin(context) {
       }
     }
 
-    /** SIGTERM the inhibitor and its children (Linux wrapper `sh`). */
-    const killInhibitor = (proc) => {
+    /**
+     * SIGTERM the inhibitor and its children (Linux wrapper `sh`). Uses
+     * `process.kill` rather than `ChildProcess.kill`: the negative pid targets
+     * the whole process group (the inhibitor is spawned detached, so it leads
+     * its own group), and not every runtime agrees on the ChildProcess
+     * signature.
+     */
+    const killInhibitor = (proc, signal = "SIGTERM") => {
       try {
-        proc.kill(-proc.pid, "SIGTERM")
+        process.kill(-proc.pid, signal)
+        return
       } catch {
-        try {
-          proc.kill("SIGTERM")
-        } catch {
-          // already gone
-        }
+        // fall through to signalling the pid directly
+      }
+      try {
+        process.kill(proc.pid, signal)
+      } catch {
+        // already gone
       }
     }
 
@@ -311,16 +339,41 @@ function setupPlugin(context) {
       const proc = shared.proc
       if (!proc) return
       shared.proc = null
+      const pid = proc.pid
       killInhibitor(proc)
-      log("inhibitor-stop", { pid: proc.pid })
+      log("inhibitor-stop", { pid })
+      // Belt and braces: an inhibitor that outlives SIGTERM would keep the
+      // machine awake with nothing left to release it, so make sure it dies.
+      const reaper = setTimeout(() => {
+        try {
+          process.kill(pid, 0)
+        } catch {
+          return // already gone
+        }
+        killInhibitor({ pid }, "SIGKILL")
+        log("inhibitor-kill", { pid })
+      }, 1000)
+      if (typeof reaper.unref === "function") reaper.unref()
+    }
+
+    /**
+     * How long a quiet session stays busy, and how long a work item may show
+     * no progress. While no instance has a live event stream we are blind:
+     * nothing can arrive, so holding is only useful to bridge a reconnect.
+     * Bounding that by `blindMs` is what keeps a stream-less plugin from
+     * wedging the machine awake for `staleMs` with no work in sight.
+     */
+    const bounds = () => {
+      if (shared.liveStreams > 0) return { quiet: options.quietMs, stale: options.staleMs }
+      const hold = Math.max(options.quietMs, options.blindMs)
+      return { quiet: hold, stale: options.staleMs > 0 ? Math.min(options.staleMs, hold) : 0 }
     }
 
     const isBusy = (now) => {
-      // While no instance has a live event stream we are blind: a session may
-      // be working without us seeing it, so hold rather than guess.
-      if (shared.liveStreams === 0 && shared.sessions.size > 0) return true
+      const { quiet } = bounds()
       for (const entry of shared.sessions.values()) {
-        if (entry.open > 0 || now - entry.seen < options.quietMs) return true
+        if (entry.open > 0) return true
+        if (now - entry.seen < quiet) return true
       }
       return false
     }
@@ -337,20 +390,26 @@ function setupPlugin(context) {
      * Forget sessions that are provably done, so the tracked set stays the
      * size of the live work rather than of all history:
      *   - idle: no open work item and quiet for longer than `quietMs`;
-     *   - stale: no events at all for `staleMs`, which is also what bounds a
-     *     work item whose end event was lost.
-     * While no instance has a live event stream we are blind, so idle
-     * sessions are kept (and the inhibitor held) instead of guessed away.
+     *   - stale: no events at all for `staleMs`.
+     * A work item that shows no progress for `staleMs` is cleared first: its
+     * end event was lost (dropped stream, plugin reload), and unrelated
+     * traffic would otherwise keep refreshing the session's liveness and hold
+     * the inhibitor forever.
      */
     const sweep = () => {
       const now = Date.now()
-      const blind = shared.liveStreams === 0
+      const { quiet, stale } = bounds()
       for (const [sessionID, entry] of shared.sessions) {
         const age = now - entry.seen
-        if (options.staleMs > 0 && age > options.staleMs) {
+        if (entry.open > 0 && stale > 0 && now - entry.changed > stale) {
+          log("open-reset", { sid: sessionID, open: entry.open, age })
+          entry.open = 0
+          entry.changed = now
+        }
+        if (stale > 0 && age > stale) {
           shared.sessions.delete(sessionID)
           log("stale-drop", { sid: sessionID, open: entry.open, age })
-        } else if (!blind && entry.open === 0 && age > options.quietMs) {
+        } else if (entry.open === 0 && age > quiet) {
           shared.sessions.delete(sessionID)
           log("idle-drop", { sid: sessionID, age })
         }
@@ -368,7 +427,7 @@ function setupPlugin(context) {
     const track = (sessionID) => {
       let entry = shared.sessions.get(sessionID)
       if (!entry) {
-        entry = { seen: Date.now(), open: 0 }
+        entry = { seen: Date.now(), open: 0, changed: Date.now() }
         shared.sessions.set(sessionID, entry)
         log("track", { sid: sessionID })
       }
@@ -413,13 +472,25 @@ function setupPlugin(context) {
 
       if (OPEN_EVENTS.has(type)) {
         entry.open += 1
+        entry.changed = Date.now()
         log("open", { sid: sessionID, type, open: entry.open })
         start()
         return
       }
 
       if (CLOSE_EVENTS.has(type)) {
-        if (entry.open > 0) entry.open -= 1
+        if (entry.open > 0) {
+          entry.open -= 1
+          entry.changed = Date.now()
+        }
+        // A finished execution ends the turn, so anything still open belongs
+        // to an end event that was lost. Clear it now rather than letting it
+        // pin the session busy until the stale cap catches up.
+        if (EXECUTION_END_EVENTS.has(type) && entry.open > 0) {
+          log("open-clamp", { sid: sessionID, type, open: entry.open })
+          entry.open = 0
+          entry.changed = Date.now()
+        }
         log("close", { sid: sessionID, type, open: entry.open })
         stopIfIdle()
         return

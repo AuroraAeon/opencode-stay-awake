@@ -5,6 +5,36 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-09-23
+
+### Fixed
+
+- **The inhibitor could be held long after the work was finished.** Two related
+  defects let a finished session keep the machine awake:
+  - While no plugin instance had a live event stream, `isBusy()` reported busy
+    unconditionally and the sweeper refused to drop idle sessions, so the only
+    release path left was `staleMs` — up to fifteen minutes with no evidence of
+    any work. Reproduced against the desktop app's shared server, where the
+    plugin instance is disposed with the workspace and the machine then stayed
+    awake until the stale cap expired. The blind hold is now bounded by a new
+    `blindMs` option (default 30s, long enough to bridge the stream's own retry
+    backoff).
+  - A work item whose end event was lost (a dropped stream, a plugin reload
+    mid-execution) pinned its session busy for as long as the session stayed
+    alive, because unrelated traffic kept refreshing the session's liveness and
+    the stale cap — which measured *arrival*, not *progress* — never fired. The
+    cap now measures progress, and a finished execution also clears any leftover
+    work items, so a turn that ends always releases.
+
+### Changed
+
+- `killInhibitor` now signals through `process.kill(-pid, signal)` instead of
+  `ChildProcess.kill(-pid, signal)`. The negative pid targets the inhibitor's
+  process group, but the two-argument `ChildProcess.kill` form is not portable
+  across the runtimes that can host the server.
+- `stop()` re-checks the inhibitor a second later and escalates to `SIGKILL` if
+  it outlived `SIGTERM`, so a release can no longer silently fail.
+
 ## [1.0.2] - 2026-09-23
 
 ### Changed

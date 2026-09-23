@@ -176,15 +176,21 @@ survives long silences instead of being released in the middle of them.
   no events at all for staleMs  ──►  forget the session entirely
 ```
 
-Three further rules keep it honest:
+Four further rules keep it honest:
 
 - **Quiet period** — any event refreshes a session's liveness, and a session with
   no open work item stops counting as busy after `quietMs` of silence.
 - **Grace period** — once no session is busy, the inhibitor is released `graceMs`
   later, so back-to-back executions never flap.
-- **Stale cap** — a session that emits nothing at all for `staleMs` is dropped.
-  This bounds the damage of an end event lost to a dropped stream or a plugin
-  reload, which would otherwise hold the inhibitor forever.
+- **Stale cap** — a session that emits nothing at all for `staleMs` is dropped,
+  and a work item that shows no *progress* for `staleMs` is cleared. Measuring
+  progress rather than mere arrival is what makes the cap actually work: a lost
+  end event would otherwise keep a session pinned busy for as long as unrelated
+  traffic keeps refreshing its liveness.
+- **Blind bound** — while no plugin instance has a live event stream, nothing can
+  arrive, so the hold collapses from `staleMs` to `blindMs`. That is long enough
+  to bridge a reconnect (the stream retry backoff caps at 30s) and short enough
+  that a plugin whose stream died for good cannot wedge the machine awake.
 
 Every inhibitor is bound to the OpenCode **server pid**, so a crashed, killed or
 reloaded server releases it on its own — the machine can never be wedged awake.
@@ -196,7 +202,8 @@ reloaded server releases it on its own — the machine can never be wedged awake
 | `enabled` | `true` | Master switch. |
 | `graceMs` | `3000` | Hold the inhibitor this long after the last session goes idle. |
 | `quietMs` | `10000` | A tracked session with no open work item goes idle after this much silence. |
-| `staleMs` | `900000` | Drop sessions with no events at all for this long. `0` disables. |
+| `staleMs` | `900000` | Drop sessions with no events at all for this long, and clear a work item with no progress for this long. `0` disables. |
+| `blindMs` | `30000` | Hold the inhibitor at most this long while no plugin instance has a live event stream. |
 | `sweepMs` | `5000` | How often to reconcile and release. |
 | `flags` | `["-dims"]` | `caffeinate` flags on macOS. Use `["-i"]` to inhibit idle sleep only and leave the display alone. |
 | `what` | `"sleep:idle"` | `systemd-inhibit --what` value on Linux. |

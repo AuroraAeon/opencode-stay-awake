@@ -21,13 +21,23 @@ export interface StayAwakeOptions {
    */
   quietMs?: number
   /**
-   * Drop sessions that emitted no events for this long (ms). This is what
-   * bounds a work item whose end event was lost (a dropped event stream, a
-   * plugin reload mid-execution), which would otherwise hold the inhibitor
-   * forever. `0` disables the cap.
+   * Drop sessions that emitted no events for this long (ms), and clear a work
+   * item that has shown no progress for this long. Together these bound a work
+   * item whose end event was lost (a dropped event stream, a plugin reload
+   * mid-execution), which would otherwise hold the inhibitor for as long as
+   * the session stays alive. `0` disables the cap.
    * @default 900000
    */
   staleMs?: number
+  /**
+   * How long (ms) to keep holding while no plugin instance has a live event
+   * stream. With no stream nothing can arrive, so the only reason to hold is
+   * to bridge a reconnect — and the stream retry backoff caps at 30s. Without
+   * this bound, a plugin whose stream died for good would hold the machine
+   * awake for `staleMs` with no evidence of any work at all.
+   * @default 30000
+   */
+  blindMs?: number
   /**
    * How often (ms) to reconcile the tracked sessions and release the
    * inhibitor once everything is idle.

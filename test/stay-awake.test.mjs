@@ -304,6 +304,39 @@ await scenario("T12 teardown stops the event loop", async () => {
   check("T12 inhibitor still released", inhibitors().length === 0)
 })
 
+await scenario("T13 blind hold is bounded by blindMs", async () => {
+  const { ctx, stream } = freshCtx({ quietMs: 500, staleMs: 60_000, blindMs: 1500, sweepMs: 150 })
+  const dispose = plugin.setup(ctx)
+  await sleep(50)
+  stream.emit({ type: "session.execution.started", data: { sessionID: "s13" } })
+  await waitFor(() => inhibitors().length === 1, 2000, "inhibitor start")
+  stream.emit({ type: "session.execution.succeeded", data: { sessionID: "s13" } })
+  // The stream dies for good. With no stream nothing can arrive, so the hold
+  // must collapse to blindMs instead of running all the way to staleMs.
+  stream.end()
+  await waitFor(() => inhibitors().length === 0, 8000, "blind release")
+  check("T13 released within blindMs while blind, not staleMs", true)
+  dispose()
+})
+
+await scenario("T14 lost end event self-heals at execution end", async () => {
+  const { ctx, stream } = freshCtx({ quietMs: 800, staleMs: 60_000, sweepMs: 150 })
+  const dispose = plugin.setup(ctx)
+  await sleep(50)
+  stream.emit({ type: "session.execution.started", data: { sessionID: "s14" } })
+  stream.emit({ type: "session.step.started", data: { sessionID: "s14" } })
+  stream.emit({ type: "session.tool.called", data: { sessionID: "s14" } })
+  await waitFor(() => inhibitors().length === 1, 2000, "inhibitor start")
+  await sleep(1200)
+  check("T14 held while a work item is open", inhibitors().length === 1)
+  // session.tool.success is lost to a dropped stream, but the turn still ends:
+  // the leftover work item must not pin the session busy until the stale cap.
+  stream.emit({ type: "session.execution.succeeded", data: { sessionID: "s14" } })
+  await waitFor(() => inhibitors().length === 0, 5000, "self-heal release")
+  check("T14 released after the turn ended despite the lost event", true)
+  dispose()
+})
+
 const failed = results.filter((r) => !r.ok)
 try { rmSync(LOGDIR, { recursive: true, force: true }) } catch {}
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
