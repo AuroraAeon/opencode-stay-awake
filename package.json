@@ -1,0 +1,53 @@
+{
+  "name": "opencode-stay-awake",
+  "version": "1.0.0",
+  "description": "OpenCode v2 server plugin that keeps your computer awake while any session is generating (macOS caffeinate, Linux systemd-inhibit)",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "caffeinate",
+    "systemd-inhibit",
+    "sleep",
+    "keep-awake",
+    "prevent-sleep",
+    "macos",
+    "linux"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./server": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "test/stay-awake.test.mjs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/stay-awake.test.mjs",
+    "check": "node --check index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AuroraAeon/opencode-stay-awake.git"
+  },
+  "homepage": "https://github.com/AuroraAeon/opencode-stay-awake#readme",
+  "bugs": {
+    "url": "https://github.com/AuroraAeon/opencode-stay-awake/issues"
+  }
+}
