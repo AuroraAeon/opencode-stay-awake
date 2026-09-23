@@ -1,6 +1,17 @@
+import { readFileSync as rf, writeFileSync, existsSync, mkdtempSync, rmSync } from "node:fs"
 import { spawnSync } from "node:child_process"
-import { readFileSync as rf, writeFileSync, existsSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import plugin from "../index.js"
+
+/**
+ * Debug traces go into a private per-run directory so the suite is
+ * hermetic: it works on a fresh machine and can never collide with a real
+ * debug trace or with a concurrent run.
+ */
+const LOGDIR = mkdtempSync(join(tmpdir(), "opencode-stay-awake-test-"))
+const logPath = (name) => join(LOGDIR, name)
+const TRACE_FILES = ["t10.log", "t11.log", "t12.log"]
 
 const MYPID = process.pid
 
@@ -93,8 +104,8 @@ function resetShared() {
 
 async function scenario(name, fn) {
   console.log(`\n--- ${name} ---`)
-  for (const f of ["/tmp/ka-work/t10.log", "/tmp/ka-work/t11.log", "/tmp/ka-work/t12.log"]) {
-    try { writeFileSync(f, "") } catch {}
+  for (const f of TRACE_FILES) {
+    try { writeFileSync(logPath(f), "") } catch {}
   }
   resetShared()
   const before = inhibitors().length
@@ -201,7 +212,7 @@ await scenario("T6 blind stream holds", async () => {
 })
 
 await scenario("T10 tracked set self-cleans", async () => {
-  const { ctx, stream } = freshCtx({ debug: true, debugFile: "/tmp/ka-work/t10.log" })
+  const { ctx, stream } = freshCtx({ debug: true, debugFile: logPath("t10.log") })
   const dispose = plugin.setup(ctx)
   await sleep(50)
   stream.emit({ type: "session.execution.started", data: { sessionID: "s10" } })
@@ -209,7 +220,7 @@ await scenario("T10 tracked set self-cleans", async () => {
   stream.emit({ type: "session.execution.succeeded", data: { sessionID: "s10" } })
   await waitFor(() => inhibitors().length === 0, 6000, "release")
   await sleep(700)
-  const log = rf("/tmp/ka-work/t10.log", "utf8")
+  const log = rf(logPath("t10.log"), "utf8")
   check("T10 idle session dropped from tracking", /idle-drop sid=s10/.test(log), "map self-cleans")
   check("T10 inhibitor released", inhibitors().length === 0)
   dispose()
@@ -254,8 +265,8 @@ await scenario("T9 double setup shares one inhibitor", async () => {
 })
 
 await scenario("T11 event id dedupe across instances", async () => {
-  const a = freshCtx({ debug: true, debugFile: "/tmp/ka-work/t11.log" })
-  const b = freshCtx({ debug: true, debugFile: "/tmp/ka-work/t11.log" })
+  const a = freshCtx({ debug: true, debugFile: logPath("t11.log") })
+  const b = freshCtx({ debug: true, debugFile: logPath("t11.log") })
   const d1 = plugin.setup(a.ctx)
   const d2 = plugin.setup(b.ctx)
   await sleep(50)
@@ -268,7 +279,7 @@ await scenario("T11 event id dedupe across instances", async () => {
   a.stream.emit(succeeded)
   b.stream.emit(succeeded)
   await waitFor(() => inhibitors().length === 0, 6000, "release")
-  const log = rf("/tmp/ka-work/t11.log", "utf8")
+  const log = rf(logPath("t11.log"), "utf8")
   const openLines = log.split("\n").filter((l) => l.includes("type=session.execution.started"))
   check("T11 execution counted once despite two instances", openLines.length === 1 && /open=1\b/.test(openLines[0]), `lines=${openLines.length}`)
   check("T11 released after deduped close", inhibitors().length === 0)
@@ -276,24 +287,25 @@ await scenario("T11 event id dedupe across instances", async () => {
 })
 
 await scenario("T12 teardown stops the event loop", async () => {
-  const { ctx, stream } = freshCtx({ debug: true, debugFile: "/tmp/ka-work/t12.log" })
+  const { ctx, stream } = freshCtx({ debug: true, debugFile: logPath("t12.log") })
   const dispose = plugin.setup(ctx)
   await sleep(50)
   stream.emit({ type: "session.execution.started", data: { sessionID: "s12" } })
   await waitFor(() => inhibitors().length === 1, 2000, "inhibitor start")
   dispose()
-  await waitFor(() => rf("/tmp/ka-work/t12.log", "utf8").includes("run-stopped"), 3000, "loop stop")
+  await waitFor(() => rf(logPath("t12.log"), "utf8").includes("run-stopped"), 3000, "loop stop")
   check("T12 run loop stopped after teardown", true)
   // Events emitted after teardown must be ignored (no resubscription).
-  const before = rf("/tmp/ka-work/t12.log", "utf8").length
+  const before = rf(logPath("t12.log"), "utf8").length
   stream.emit({ type: "session.execution.started", data: { sessionID: "s12b" } })
   await sleep(600)
-  const after = rf("/tmp/ka-work/t12.log", "utf8").length
+  const after = rf(logPath("t12.log"), "utf8").length
   check("T12 no events processed after teardown", after === before, `before=${before} after=${after}`)
   check("T12 inhibitor still released", inhibitors().length === 0)
 })
 
 const failed = results.filter((r) => !r.ok)
+try { rmSync(LOGDIR, { recursive: true, force: true }) } catch {}
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 if (failed.length) { console.log("FAILED:", failed.map((f) => f.name).join(", ")); process.exit(1) }
 process.exit(0)
