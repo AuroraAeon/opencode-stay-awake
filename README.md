@@ -158,6 +158,19 @@ pgrep -fl caffeinate        # macOS
 systemd-inhibit --list      # Linux
 ```
 
+A healthy trace shows `open` counting **up to a handful and back to 0** for
+each run. If it climbs without bound (tens and rising) while a single session
+works, the server is running more than one copy of this plugin — see the note
+below.
+
+> **After installing or upgrading, restart the app** (or run `opencode reload`).
+> Files in `~/.config/opencode/plugins/` hot-reload, but a long-lived server
+> that has been running across an upgrade can keep an instance of the previous
+> version subscribed alongside the new one. Because every instance receives
+> every event, that inflates the shared work counters. A restart clears it; the
+> `staleMs` cap bounds the effect in the meantime, so the worst case is an
+> inhibitor held a little too long, never a wedged machine.
+
 > **Where the environment variable applies.** The plugin runs inside the
 > OpenCode *server* process, not the CLI that starts a run. Against the desktop
 > app's shared server, `OPENCODE_STAY_AWAKE=0 opencode run …` therefore has no
