@@ -344,3 +344,5 @@ useful beyond this plugin:
 ## License
 
 MIT — see [LICENSE](./LICENSE).
+
+Security reports: [.github/SECURITY.md](./.github/SECURITY.md).
