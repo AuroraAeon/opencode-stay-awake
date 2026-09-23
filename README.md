@@ -2,6 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/opencode-stay-awake.svg)](https://www.npmjs.com/package/opencode-stay-awake)
 [![license](https://img.shields.io/npm/l/opencode-stay-awake.svg)](./LICENSE)
+[![CI](https://github.com/AuroraAeon/opencode-stay-awake/actions/workflows/ci.yml/badge.svg)](https://github.com/AuroraAeon/opencode-stay-awake/actions/workflows/ci.yml)
 
 OpenCode **v2** server plugin that keeps your computer awake **while OpenCode is
 actually working** — and lets it sleep again the moment every session goes idle.
@@ -169,7 +170,10 @@ systemd-inhibit --list      # Linux
 ```bash
 npm test        # 24 behavioural checks against a synthetic event stream
 node --check index.js
+npm run check   # syntax check only
 ```
+
+CI runs the same suite on `macos-latest` on every push and pull request.
 
 The test suite drives the plugin with a fake event stream and asserts the real
 inhibitor lifecycle (spawn, hold across long tool calls, release on idle,

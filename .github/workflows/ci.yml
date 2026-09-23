@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Behavioural tests
+    # macOS is the primary platform (caffeinate). The suite skips itself on
+    # hosts without a CLI sleep inhibitor, so Linux/Windows runners would be
+    # no-ops rather than real coverage.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Syntax check
+        run: node --check index.js
+
+      - name: Pack dry run
+        run: npm pack --dry-run
+
+      - name: Test suite
+        run: npm test
