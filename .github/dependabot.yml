@@ -8,6 +8,12 @@ updates:
     labels:
       - dependencies
       - github-actions
+    # Action majors can change runner requirements and defaults, so they are
+    # reviewed and bumped by hand instead of by automation.
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
 
   - package-ecosystem: npm
     directory: /
@@ -15,3 +21,7 @@ updates:
       interval: weekly
     labels:
       - dependencies
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
