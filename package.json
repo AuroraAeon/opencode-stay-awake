@@ -1,6 +1,6 @@
 {
   "name": "opencode-stay-awake",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "OpenCode v2 server plugin that keeps your computer awake while any session is generating (macOS caffeinate, Linux systemd-inhibit)",
   "keywords": [
     "opencode",

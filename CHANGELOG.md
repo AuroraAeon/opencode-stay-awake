@@ -5,6 +5,30 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-09-23
+
+### Fixed
+
+- The README's license badge was a dynamic shields.io npm badge that renders
+  "package not found" when the registry metadata is cold or is served from a
+  cache written before publication. Replaced with a static MIT badge, and the
+  version badge now uses the `/latest` variant, so neither can report a missing
+  package.
+
+### Documentation
+
+- Restructured the README around time-to-first-success, so install, verify and
+  disable/remove all sit above the fold instead of several screens down.
+- Added a contents list, an ASCII state diagram for the busy model, a
+  "why not just use…" comparison against manual `caffeinate` / `pmset` /
+  always-on toggles, an FAQ, and a symptom-to-cause troubleshooting table.
+- Documented that `opencode plugin add` writes the config key as `"plugins"`
+  (plural) while the examples use `"plugin"` — both are accepted and behave
+  identically, so nobody mistakes their own config for a mistake.
+- Design notes now record the v2 plugin contract, the event envelope, why
+  event consumers must de-duplicate by event id, and the Bun `appendFile`
+  gotcha, as reference findings beyond this plugin.
+
 ## [1.0.0] - 2026-09-23
 
 First release.
